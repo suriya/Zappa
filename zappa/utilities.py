@@ -20,16 +20,19 @@ else:
 # Settings / Packaging
 ##
 
-def copytree(src, dst, symlinks=False, ignore=None):
+def copytree(src, dst, metadata=True, symlinks=False, ignore=None):
     """
     This is a contributed re-implementation of 'copytree' that
     should work with the exact same behavior on multiple platforms.
 
+    When `metadata` is False, file metadata such as permissions and modification
+    times are not copied.
     """
 
     if not os.path.exists(dst):
         os.makedirs(dst)
-        shutil.copystat(src, dst)
+        if metadata:
+            shutil.copystat(src, dst)
     lst = os.listdir(src)
 
     if ignore:
@@ -44,16 +47,17 @@ def copytree(src, dst, symlinks=False, ignore=None):
             if os.path.lexists(d):
                 os.remove(d)
             os.symlink(os.readlink(s), d)
-            try:
-                st = os.lstat(s)
-                mode = stat.S_IMODE(st.st_mode)
-                os.lchmod(d, mode)
-            except:
-                pass  # lchmod not available
+            if metadata:
+                try:
+                    st = os.lstat(s)
+                    mode = stat.S_IMODE(st.st_mode)
+                    os.lchmod(d, mode)
+                except:
+                    pass  # lchmod not available
         elif os.path.isdir(s):
-            copytree(s, d, symlinks, ignore)
+            copytree(s, d, metadata, symlinks, ignore)
         else:
-            shutil.copy2(s, d)
+            shutil.copy2(s, d) if metadata else shutil.copy(s, d)
 
 def parse_s3_url(url):
     """
@@ -211,11 +215,35 @@ def get_event_source(event_source, lambda_arn, target_function, boto_session, dr
         def __init__(self):
             return
 
+    class ExtendedSnsEventSource(kappa.event_source.sns.SNSEventSource):
+        @property
+        def filters(self):
+            return self._config.get('filters')
+
+        def add_filters(self, function):
+            try:
+                subscription = self.exists(function)
+                if subscription:
+                    response = self._sns.call(
+                        'set_subscription_attributes',
+                        SubscriptionArn=subscription['SubscriptionArn'],
+                        AttributeName='FilterPolicy',
+                        AttributeValue=json.dumps(self.filters)
+                    )
+                    kappa.event_source.sns.LOG.debug(response)
+            except Exception:
+                kappa.event_source.sns.LOG.exception('Unable to add filters for SNS topic %s', self.arn)
+
+        def add(self, function):
+            super(ExtendedSnsEventSource, self).add(function)
+            if self.filters:
+                self.add_filters(function)
+
     event_source_map = {
         'dynamodb': kappa.event_source.dynamodb_stream.DynamoDBStreamEventSource,
         'kinesis': kappa.event_source.kinesis.KinesisEventSource,
         's3': kappa.event_source.s3.S3EventSource,
-        'sns': kappa.event_source.sns.SNSEventSource,
+        'sns': ExtendedSnsEventSource,
         'events': kappa.event_source.cloudwatch.CloudWatchEventSource
     }
 
@@ -361,8 +389,27 @@ def validate_name(name, maxlen=80):
     return name
 
 
-def contains_python_files_or_subdirs(dirs, files):
+def contains_python_files_or_subdirs(folder):
     """
-    checks if len of dirs greater 0 or if there are any files ending on .py or .pyc in files
+    Checks (recursively) if the directory contains .py or .pyc files
     """
-    return len(dirs) > 0 or len([filename for filename in files if filename.endswith('.py') or filename.endswith('.pyc')]) > 0
+    for root, dirs, files in os.walk(folder):
+        if [filename for filename in files if filename.endswith('.py') or filename.endswith('.pyc')]:
+            return True
+
+        for d in dirs:
+            for _, subdirs, subfiles in os.walk(d):
+                if [filename for filename in subfiles if filename.endswith('.py') or filename.endswith('.pyc')]:
+                    return True
+
+    return False
+
+
+def conflicts_with_a_neighbouring_module(directory_path):
+    """
+    Checks if a directory lies in the same directory as a .py file with the same name.
+    """
+    parent_dir_path, current_dir_name = os.path.split(os.path.normpath(directory_path))
+    neighbours = os.listdir(parent_dir_path)
+    conflicting_neighbour_filename = current_dir_name+'.py'
+    return conflicting_neighbour_filename in neighbours

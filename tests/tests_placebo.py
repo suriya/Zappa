@@ -41,7 +41,6 @@ class TestZappa(unittest.TestCase):
         z = Zappa(session)
         zip_path = z.create_lambda_zip(minify=False)
         res = z.upload_to_s3(zip_path, bucket_name)
-        os.remove(zip_path)
         self.assertTrue(res)
         s3 = session.resource('s3')
 
@@ -59,8 +58,36 @@ class TestZappa(unittest.TestCase):
         fail = z.upload_to_s3('/tmp/this_isnt_real', bucket_name)
         self.assertFalse(fail)
 
+        #Will graciouly handle quirky S3 behavior on 'us-east-1' region name'
+        z.aws_region = 'us-east-1'
+        res = z.upload_to_s3(zip_path, bucket_name)
+        os.remove(zip_path)
+        self.assertTrue(res)
+
     @placebo_session
-    def test_create_lambda_function(self, session):
+    def test_copy_on_s3(self, session):
+        bucket_name = 'test_zappa_upload_s3'
+        z = Zappa(session)
+        zip_path = z.create_lambda_zip(minify=False)
+        res = z.upload_to_s3(zip_path, bucket_name)
+        self.assertTrue(res)
+        s3 = session.resource('s3')
+
+        # will throw ClientError with 404 if bucket doesn't exist
+        s3.meta.client.head_bucket(Bucket=bucket_name)
+
+        # will throw ClientError with 404 if object doesn't exist
+        s3.meta.client.head_object(
+            Bucket=bucket_name,
+            Key=zip_path,
+        )
+        zp = 'copy_' + zip_path
+        res = z.copy_on_s3(zip_path, zp, bucket_name)
+        os.remove(zip_path)
+        self.assertTrue(res)
+
+    @placebo_session
+    def test_create_lambda_function_s3(self, session):
         bucket_name = 'lmbda'
         zip_path = 'Spheres-dev-1454694878.zip'
 
@@ -79,6 +106,29 @@ class TestZappa(unittest.TestCase):
         arn = z.update_lambda_function(
             bucket=bucket_name,
             s3_key=zip_path,
+            function_name='test_lmbda_function55',
+        )
+
+    @placebo_session
+    def test_create_lambda_function_local(self, session):
+        bucket_name = 'lmbda'
+        local_file = 'Spheres-dev-1454694878.zip'
+
+        z = Zappa(session)
+        z.aws_region = 'us-east-1'
+        z.load_credentials(session)
+        z.credentials_arn = 'arn:aws:iam::12345:role/ZappaLambdaExecution'
+
+        arn = z.create_lambda_function(
+            bucket=bucket_name,
+            local_zip=local_file,
+            function_name='test_lmbda_function55',
+            handler='runme.lambda_handler'
+        )
+
+        arn = z.update_lambda_function(
+            bucket=bucket_name,
+            local_zip=local_file,
             function_name='test_lmbda_function55',
         )
 
@@ -212,7 +262,7 @@ class TestZappa(unittest.TestCase):
                     u'account': u'72333333333',
                     u'region': u'us-east-1',
                     u'detail': {},
-                    u'Records': [{'s3': {'configurationId': 'test_settings.aws_s3_event'}}],
+                    u'Records': [{'s3': {'configurationId': 'test_project:test_settings.aws_s3_event'}}],
                     u'source': u'aws.events',
                     u'version': u'0',
                     u'time': u'2016-05-10T21:05:39Z',
@@ -251,6 +301,37 @@ class TestZappa(unittest.TestCase):
             ]
         }
         self.assertEqual("AWS SNS EVENT", lh.handler(event, None))
+
+        # Test AWS SNS event
+        event = {
+            u'account': u'72333333333',
+            u'region': u'us-east-1',
+            u'detail': {},
+            u'Records': [
+                {
+                    u'EventVersion': u'1.0',
+                    u'EventSource': u'aws:sns',
+                    u'EventSubscriptionArn': u'arn:aws:sns:EXAMPLE',
+                    u'Sns': {
+                        u'SignatureVersion': u'1',
+                        u'Timestamp': u'1970-01-01T00:00:00.000Z',
+                        u'Signature': u'EXAMPLE',
+                        u'SigningCertUrl': u'EXAMPLE',
+                        u'MessageId': u'95df01b4-ee98-5cb9-9903-4c221d41eb5e',
+                        u'Message': u'{"args": ["arg1", "arg2"], "command": "zappa.async.route_sns_task", '
+                                    u'"task_path": "test_settings.aws_async_sns_event", "kwargs": {"arg3": "varg3"}}',
+                        u'Subject': u'TestInvoke',
+                        u'Type': u'Notification',
+                        u'UnsubscribeUrl': u'EXAMPLE',
+                        u'MessageAttributes': {
+                            u'Test': {u'Type': u'String', u'Value': u'TestString'},
+                            u'TestBinary': {u'Type': u'Binary', u'Value': u'TestBinary'}
+                        }
+                    }
+                }
+            ]
+        }
+        self.assertEqual("AWS ASYNC SNS EVENT", lh.handler(event, None))
 
         # Test AWS DynamoDB event
         event = {
@@ -383,6 +464,28 @@ class TestZappa(unittest.TestCase):
         add_event_source(event_source, 'lambda:lambda:lambda:lambda', 'test_settings.callback', session, dry=True)
         remove_event_source(event_source, 'lambda:lambda:lambda:lambda', 'test_settings.callback', session, dry=True)
         # get_event_source_status(event_source, 'lambda:lambda:lambda:lambda', 'test_settings.callback', session, dry=True)
+
+    @placebo_session
+    def test_cognito_trigger(self, session):
+        z = Zappa(session)
+        z.update_cognito('Zappa-Trigger-Test', 'us-east-1_9jUv74DH8', {'PreSignUp': 'test.tasks.pre_signup'}, 'arn:aws:lambda:us-east-1:12345:function:Zappa-Trigger-Test')
+
+    @placebo_session
+    def test_cognito_trigger_existing(self, session):
+        z = Zappa(session)
+        z.update_cognito('Zappa-Trigger-Test', 'us-east-1_9jUv74DH8', {'PreSignUp': 'test.tasks.pre_signup'}, 'arn:aws:lambda:us-east-1:12345:function:Zappa-Trigger-Test')
+
+    @placebo_session
+    def test_cli_cognito_triggers(self, session):
+        zappa_cli = ZappaCLI()
+        zappa_cli.api_stage = 'ttt888'
+        zappa_cli.api_key_required = True
+        zappa_cli.load_settings('test_settings.json', session)
+        zappa_cli.lambda_arn = 'arn:aws:lambda:us-east-1:12345:function:Zappa-Trigger-Test'
+        zappa_cli.update_cognito_triggers()
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

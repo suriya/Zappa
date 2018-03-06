@@ -29,7 +29,8 @@ def create_wsgi_request(event_info,
                         server_name='zappa',
                         script_name=None,
                         trailing_slash=True,
-                        binary_support=False
+                        binary_support=False,
+                        context_header_mappings={}
                         ):
         """
         Given some event_info via API Gateway,
@@ -39,6 +40,19 @@ def create_wsgi_request(event_info,
         params = event_info['pathParameters']
         query = event_info['queryStringParameters'] # APIGW won't allow multiple entries, ex ?id=a&id=b
         headers = event_info['headers'] or {} # Allow for the AGW console 'Test' button to work (Pull #735)
+
+        if context_header_mappings:
+            for key, value in context_header_mappings.items():
+                parts = value.split('.')
+                header_val = event_info['requestContext']
+                for part in parts:
+                    if part not in header_val:
+                        header_val = None
+                        break
+                    else:
+                        header_val = header_val[part]
+                if header_val is not None:
+                    headers[key] = header_val
 
         # Extract remote user from context if Authorizer is enabled
         remote_user = None
@@ -88,11 +102,11 @@ def create_wsgi_request(event_info,
             remote_addr = '127.0.0.1'
 
         environ = {
-            'PATH_INFO': path,
-            'QUERY_STRING': query_string,
+            'PATH_INFO': get_wsgi_string(path),
+            'QUERY_STRING': get_wsgi_string(query_string),
             'REMOTE_ADDR': remote_addr,
             'REQUEST_METHOD': method,
-            'SCRIPT_NAME': str(script_name) if script_name else '',
+            'SCRIPT_NAME': get_wsgi_string(str(script_name)) if script_name else '',
             'SERVER_NAME': str(server_name),
             'SERVER_PORT': headers.get('X-Forwarded-Port', '80'),
             'SERVER_PROTOCOL': str('HTTP/1.1'),
@@ -106,7 +120,7 @@ def create_wsgi_request(event_info,
         }
 
         # Input processing
-        if method in ["POST", "PUT", "PATCH"]:
+        if method in ["POST", "PUT", "PATCH", "DELETE"]:
             if 'Content-Type' in headers:
                 environ['CONTENT_TYPE'] = headers['Content-Type']
 
@@ -145,7 +159,6 @@ def common_log(environ, response, response_time=None):
     """
 
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
 
     if response_time:
         formatter = ApacheFormatter(with_response_time=True)
@@ -164,3 +177,11 @@ def common_log(environ, response, response_time=None):
     logger.info(log_entry)
 
     return log_entry
+
+
+# Related: https://github.com/Miserlou/Zappa/issues/1199
+def get_wsgi_string(string, encoding='utf-8'):
+    """
+    Returns wsgi-compatible string
+    """
+    return string.encode(encoding).decode('iso-8859-1')
