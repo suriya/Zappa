@@ -1051,6 +1051,7 @@ class Zappa(object):
                                 xray_tracing=False,
                                 local_zip=None,
                                 use_alb=False,
+                                layers=None
                             ):
         """
         Given a bucket and key (or a local path) of a valid Lambda-zip, a function name and a handler, register that Lambda function.
@@ -1065,6 +1066,8 @@ class Zappa(object):
             aws_environment_variables = {}
         if not aws_kms_key_arn:
             aws_kms_key_arn = ''
+        if not layers:
+            layers = []
 
         kwargs = dict(
             FunctionName=function_name,
@@ -1081,7 +1084,8 @@ class Zappa(object):
             KMSKeyArn=aws_kms_key_arn,
             TracingConfig={
                 'Mode': 'Active' if self.xray_tracing else 'PassThrough'
-            }
+            },
+            Layers=layers
         )
         if local_zip:
             kwargs['Code'] = {
@@ -1189,7 +1193,8 @@ class Zappa(object):
                                         vpc_config=None,
                                         runtime='python2.7',
                                         aws_environment_variables=None,
-                                        aws_kms_key_arn=None
+                                        aws_kms_key_arn=None,
+                                        layers=None
                                     ):
         """
         Given an existing function ARN, update the configuration variables.
@@ -1204,6 +1209,8 @@ class Zappa(object):
             aws_kms_key_arn = ''
         if not aws_environment_variables:
             aws_environment_variables = {}
+        if not layers:
+            layers = []
 
         # Check if there are any remote aws lambda env vars so they don't get trashed.
         # https://github.com/Miserlou/Zappa/issues/987,  Related: https://github.com/Miserlou/Zappa/issues/765
@@ -1228,7 +1235,8 @@ class Zappa(object):
             KMSKeyArn=aws_kms_key_arn,
             TracingConfig={
                 'Mode': 'Active' if self.xray_tracing else 'PassThrough'
-            }
+            },
+            Layers=layers
         )
 
         resource_arn = response['FunctionArn']
