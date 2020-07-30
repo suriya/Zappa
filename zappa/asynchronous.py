@@ -178,7 +178,7 @@ class LambdaAsyncResponse:
         Given a message, directly invoke the lamdba function for this task.
         """
         message['command'] = 'zappa.asynchronous.route_lambda_task'
-        payload = json.dumps(message).encode('utf-8')
+        payload = json.dumps(message)
         if len(payload) > LAMBDA_ASYNC_PAYLOAD_LIMIT: # pragma: no cover
             raise AsyncException("Payload too large for async Lambda call")
         self.response = self.client.invoke(
@@ -244,7 +244,7 @@ class SnsAsyncResponse(LambdaAsyncResponse):
         Given a message, publish to this topic.
         """
         message['command'] = 'zappa.asynchronous.route_sns_task'
-        payload = json.dumps(message).encode('utf-8')
+        payload = json.dumps(message)
         if len(payload) > LAMBDA_ASYNC_PAYLOAD_LIMIT: # pragma: no cover
             raise AsyncException("Payload too large for SNS")
         self.response = self.client.publish(
